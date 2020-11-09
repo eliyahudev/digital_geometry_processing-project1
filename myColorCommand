@@ -1,0 +1,239 @@
+#include "stdafx.h"
+
+#include "colorMeshVerticesCmd.h"
+
+#include "Utils/STL_Macros.h"
+#include "Utils/Maya_Macros.h"
+#include "Utils/Maya_Utils.h"
+#include "Utils/MatlabInterface.h"
+#include "Utils/GMM_Macros.h"
+#include "Utils/MatlabGMMDataExchange.h"
+#include "Utils/Utilities.h"
+
+#define PI 3.141592653589793238463
+
+colorMeshVerticesCmd::colorMeshVerticesCmd()
+{
+
+}
+
+void* colorMeshVerticesCmd::creator()
+{
+	return new colorMeshVerticesCmd;
+}
+
+MString colorMeshVerticesCmd::commandName()
+{
+	return "colorMeshVerticesCmd";
+}
+
+bool colorMeshVerticesCmd::isUndoable() const
+{
+	return false;
+}
+
+MStatus	colorMeshVerticesCmd::doIt(const MArgList& argList)
+{
+	MStatus stat = MS::kSuccess;
+
+	//This code is here just as an example of how to use the Matlab interface.
+	//You code for inverting a matrix should be written as part of a new Maya command with the name "inverseMatrixCmd”.
+	//test Matlab engine
+	if (0)
+	{
+		MatlabInterface::GetEngine().EvalToCout("My_Matrix = [1 2 3; 4 5 6]"); //creates a 2x3 matrix with name My_Matrix
+		GMMDenseColMatrix M(2, 4);
+		M(0, 0) = 8.0;
+		M(1, 2) = -4.0;
+		int result = MatlabGMMDataExchange::SetEngineDenseMatrix("M", M);
+
+		GMMDenseColMatrix My_Matrix;
+		result = MatlabGMMDataExchange::GetEngineDenseMatrix("My_Matrix", My_Matrix);
+		cout << "printing the GMM Matrix: " <<  My_Matrix << endl;
+	}
+
+
+	MSyntax commandSyntax = syntax();
+	MArgDatabase argData(commandSyntax, argList, &stat);
+	MCHECKERROR(stat, "Wrong syntax for command " + commandName());
+
+	MSelectionList objectsList;
+	stat = argData.getObjects(objectsList);
+	MCHECKERROR(stat, "Can't access object list");
+
+	MObject object;
+	stat = objectsList.getDependNode(0, object);
+	MCHECKERROR(stat, "Can't access object");
+
+	MObject meshObject;
+	stat = Maya_Utils::getMe_a_Mesh(object, meshObject);
+	MCHECKERROR(stat, "Object is not a mesh");
+
+	MFnMesh meshFn(meshObject, &stat);
+	MCHECKERROR(stat, "Can't access mesh");
+
+	int numVerticesInMeshCreated = 0;
+	int numPolygons = meshFn.numPolygons(&stat);
+
+	MItMeshPolygon poly(meshObject);
+	if(!poly.isPlanar(&stat) || poly.isLamina(&stat) || poly.isHoled(&stat))
+	{
+		MCHECKERROR(MS::kFailure, "The given polygon shape is either self intersecting, holed or non-planar which are not supported");
+	}
+
+	unsigned int temp; 
+	for (int i=0; i<numPolygons; i++)
+	{
+		temp=poly.polygonVertexCount();
+		if ( 3 != temp )
+			MCHECKERROR(MS::kFailure, "this is not a triangle mesh!");
+		poly.next();
+	}
+	
+	/***************** this part should be changed ****************/
+
+	MIntArray vertexList;
+	MColorArray colors;
+	
+	valance(meshFn, vertexList, colors);
+	curvature(meshFn, vertexList, colors);
+
+
+	return MS::kSuccess;}
+
+MSyntax colorMeshVerticesCmd::syntax()
+{
+	MStatus stat = MS::kSuccess;
+	MSyntax commandSyntax;
+
+	// Hint - you need to use here the addFlag method of MSyntax class
+
+	stat = commandSyntax.setObjectType(MSyntax::kSelectionList, 1, 1); //expect exactly one object
+	MCHECKERRORNORET(stat, "Can't create Syntax object for this command");
+
+	commandSyntax.useSelectionAsDefault(true);
+	return commandSyntax;}
+
+
+void colorMeshVerticesCmd::valance(MFnMesh& meshFn, MIntArray& vertexList, MColorArray& colors) {
+	meshFn.deleteColorSet("Valence");
+	MString s1 = meshFn.createColorSetWithName("Valence");
+	meshFn.setCurrentColorSetName(s1);
+
+	colorizeValance(meshFn, vertexList, colors);
+
+	meshFn.setVertexColors(colors, vertexList);
+	meshFn.setDisplayColors(true);
+}
+
+void colorMeshVerticesCmd::colorizeValance(const MFnMesh & meshFn, MIntArray& vertexList, MColorArray& colors) {
+	
+	MItMeshVertex vertex_it(meshFn.object());
+	int valence, cur_index;
+
+	while (!vertex_it.isDone())
+	{
+		cur_index = vertex_it.index();
+		vertex_it.numConnectedEdges(valence);
+
+		if (valence <= 3) {
+			colors.append(0.5f, 0.0f, 1.0f);
+		}
+		else if (valence >= 9) {
+			colors.append(1.0f, 0.0f, 0.0f);
+		}
+		else {
+			switch (valence)
+			{
+			case 4:
+				colors.append(0.0f, 1.0f, 1.0f);
+				break;
+			case 5:
+				colors.append(1.0f, 0.0f, 1.0f);
+				break;
+			case 6:
+				colors.append(0.0f, 1.0f, 0.0f);
+				break;
+			case 7:
+				colors.append(1.0f, 1.0f, 0.5f);
+				break;
+			case 8:
+				colors.append(0.0f, 0.0f, 1.0f);
+				break;
+			} // end of switch
+		}  //end of if
+		vertexList.append(cur_index);
+		vertex_it.next();
+	}  // end of while
+
+
+}
+
+void colorMeshVerticesCmd::curvature(MFnMesh & meshFn, MIntArray & vertexList ,MColorArray & colors) {
+	meshFn.deleteColorSet("curvature");
+	MString s1 = meshFn.createColorSetWithName("curvature");
+	meshFn.setCurrentColorSetName(s1);
+
+	std::vector<double> g1;
+	iniateCurvature(meshFn, g1);
+	gaussianCurvature(meshFn, g1);
+	colorGaussianCurvature(g1, vertexList, colors);
+
+	meshFn.setVertexColors(colors, vertexList);
+	meshFn.setDisplayColors(true);
+}
+
+void colorMeshVerticesCmd::iniateCurvature(const MFnMesh& meshFn, std::vector<double> & g1) {
+	MItMeshVertex vertex_it(meshFn.object());
+
+	int i = 0;
+	while (!vertex_it.isDone())
+	{
+		if (meshFn.onBoundary(i))
+			g1.push_back(PI);// PI;
+		else
+			g1.push_back(2 * PI);//2 * PI;
+		vertex_it.next();
+	}
+}
+
+void colorMeshVerticesCmd::gaussianCurvature(const MFnMesh& meshFn, std::vector<double> & g1) {
+
+	MPointArray points;
+	MIntArray vertexLst;
+	MItMeshPolygon hatzilu(meshFn.object());
+	double  angle0, angle1, angle2;
+	MPoint pos0, pos1, pos2;
+	while (!hatzilu.isDone())
+	{
+		hatzilu.getTriangles(points, vertexLst);
+		meshFn.getPoint(vertexLst[0], pos0);
+		meshFn.getPoint(vertexLst[1], pos1);
+		meshFn.getPoint(vertexLst[2], pos2);
+
+		angle0 = angle_triangle(pos0, pos1, pos2);
+		g1[vertexLst[0]] -= angle0;
+		angle1 = angle_triangle(pos1, pos2, pos0);
+		g1[vertexLst[1]] -= angle1;
+		angle2 = angle_triangle(pos2, pos0, pos1);
+		g1[vertexLst[2]] -= angle2;
+		hatzilu.next();
+	}
+
+}
+
+void colorMeshVerticesCmd::colorGaussianCurvature(std::vector<double>& g1, MIntArray& vertexList, MColorArray& colors) {
+
+	double flags[2];
+	float r, g, b;
+
+	flags[0] = minV(g1);
+	flags[1] = maxV(g1);
+	MGlobal::displayInfo(MString("min value:") + flags[0] + MString(" , max value:") + flags[1]);
+	for (int i = 0; i < g1.size(); i++) {
+		vertexList.append(i);
+		mapColor(g1[i], r, g, b, flags[0], flags[1]);
+		colors.append(r, g, b);
+	}
+
+}
