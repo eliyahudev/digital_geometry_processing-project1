@@ -12,6 +12,13 @@
 
 #define PI 3.141592653589793238463
 
+//flags
+#define kSubsampleBoundaryLong  "-max"
+#define kSubsampleBoundaryShort "-min"
+#define kNumVerticesLong        "-t"
+
+
+
 colorMeshVerticesCmd::colorMeshVerticesCmd()
 {
 
@@ -49,7 +56,7 @@ MStatus	colorMeshVerticesCmd::doIt(const MArgList& argList)
 
 		GMMDenseColMatrix My_Matrix;
 		result = MatlabGMMDataExchange::GetEngineDenseMatrix("My_Matrix", My_Matrix);
-		cout << "printing the GMM Matrix: " <<  My_Matrix << endl;
+		cout << "printing the GMM Matrix: " << My_Matrix << endl;
 	}
 
 
@@ -76,43 +83,67 @@ MStatus	colorMeshVerticesCmd::doIt(const MArgList& argList)
 	int numPolygons = meshFn.numPolygons(&stat);
 
 	MItMeshPolygon poly(meshObject);
-	if(!poly.isPlanar(&stat) || poly.isLamina(&stat) || poly.isHoled(&stat))
+	if (!poly.isPlanar(&stat) || poly.isLamina(&stat) || poly.isHoled(&stat))
 	{
 		MCHECKERROR(MS::kFailure, "The given polygon shape is either self intersecting, holed or non-planar which are not supported");
 	}
 
-	unsigned int temp; 
-	for (int i=0; i<numPolygons; i++)
+	unsigned int temp;
+	for (int i = 0; i < numPolygons; i++)
 	{
-		temp=poly.polygonVertexCount();
-		if ( 3 != temp )
+		temp = poly.polygonVertexCount();
+		if (3 != temp)
 			MCHECKERROR(MS::kFailure, "this is not a triangle mesh!");
 		poly.next();
 	}
-	
-	/***************** this part should be changed ****************/
+
+	/***************** ======================================this part should be changed =======================================****************/
 
 	MIntArray vertexList;
 	MColorArray colors;
-	
+
 	valance(meshFn, vertexList, colors);
+
+	int numWantedVertices = 0;
+
+	if (argData.isFlagSet(kSubsampleBoundaryShort))
+	{
+		numWantedVertices = argData.flagArgumentInt(kSubsampleBoundaryShort, 0, &stat);
+		MGlobal::displayInfo(MString("min value:") + MString(" , max value:"));
+		MCHECKERROR(stat, "Can't access flag " + MString(kSubsampleBoundaryShort) + " argument");
+		if (numWantedVertices < 3)
+		{
+			MCHECKERROR(MS::kFailure, "Illegal number of wanted vertices has been set");
+		}
+	}
+	else //calculating a default value
+	{
+		numWantedVertices = 2 * meshFn.polygonVertexCount(0, &stat);
+		MCHECKERROR(stat, "Failed to get the number of vertices in the given polygon");
+	}
+
+	
+
 	curvature(meshFn, vertexList, colors);
 
 
-	return MS::kSuccess;}
+	return MS::kSuccess;
+}
+
+/***************** ======================================this part should be changed =======================================****************/
 
 MSyntax colorMeshVerticesCmd::syntax()
 {
 	MStatus stat = MS::kSuccess;
 	MSyntax commandSyntax;
 
-	// Hint - you need to use here the addFlag method of MSyntax class
 
 	stat = commandSyntax.setObjectType(MSyntax::kSelectionList, 1, 1); //expect exactly one object
 	MCHECKERRORNORET(stat, "Can't create Syntax object for this command");
 
 	commandSyntax.useSelectionAsDefault(true);
-	return commandSyntax;}
+	return commandSyntax;
+}
 
 
 void colorMeshVerticesCmd::valance(MFnMesh& meshFn, MIntArray& vertexList, MColorArray& colors) {
@@ -126,8 +157,8 @@ void colorMeshVerticesCmd::valance(MFnMesh& meshFn, MIntArray& vertexList, MColo
 	meshFn.setDisplayColors(true);
 }
 
-void colorMeshVerticesCmd::colorizeValance(const MFnMesh & meshFn, MIntArray& vertexList, MColorArray& colors) {
-	
+void colorMeshVerticesCmd::colorizeValance(const MFnMesh& meshFn, MIntArray& vertexList, MColorArray& colors) {
+
 	MItMeshVertex vertex_it(meshFn.object());
 	int valence, cur_index;
 
@@ -169,7 +200,7 @@ void colorMeshVerticesCmd::colorizeValance(const MFnMesh & meshFn, MIntArray& ve
 
 }
 
-void colorMeshVerticesCmd::curvature(MFnMesh & meshFn, MIntArray & vertexList ,MColorArray & colors) {
+void colorMeshVerticesCmd::curvature(MFnMesh& meshFn, MIntArray& vertexList, MColorArray& colors) {
 	meshFn.deleteColorSet("curvature");
 	MString s1 = meshFn.createColorSetWithName("curvature");
 	meshFn.setCurrentColorSetName(s1);
@@ -183,13 +214,13 @@ void colorMeshVerticesCmd::curvature(MFnMesh & meshFn, MIntArray & vertexList ,M
 	meshFn.setDisplayColors(true);
 }
 
-void colorMeshVerticesCmd::iniateCurvature(const MFnMesh& meshFn, std::vector<double> & g1) {
+void colorMeshVerticesCmd::iniateCurvature(const MFnMesh& meshFn, std::vector<double>& g1) {
 	MItMeshVertex vertex_it(meshFn.object());
 
 	int i = 0;
 	while (!vertex_it.isDone())
 	{
-		if (meshFn.onBoundary(i))
+		if (vertex_it.onBoundary())
 			g1.push_back(PI);// PI;
 		else
 			g1.push_back(2 * PI);//2 * PI;
@@ -197,7 +228,7 @@ void colorMeshVerticesCmd::iniateCurvature(const MFnMesh& meshFn, std::vector<do
 	}
 }
 
-void colorMeshVerticesCmd::gaussianCurvature(const MFnMesh& meshFn, std::vector<double> & g1) {
+void colorMeshVerticesCmd::gaussianCurvature(const MFnMesh& meshFn, std::vector<double>& g1) {
 
 	MPointArray points;
 	MIntArray vertexLst;
